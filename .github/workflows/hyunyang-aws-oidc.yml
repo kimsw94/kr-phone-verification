@@ -13,12 +13,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Configure AWS credentials (OIDC)
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v6
         with:
-          role-to-assume: arn:aws:iam::070108438322:role/hyunyang/github/hyunyang-kimsw94-kr-phone-verification-main
+          role-to-assume: arn:aws:iam::070108438322:role/hyunyang/github/hyunyang-rabbit-kr-phone-verification-main
           aws-region: ap-northeast-2
 
       - name: Verify AWS identity
