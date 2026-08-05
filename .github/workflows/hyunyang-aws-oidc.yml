@@ -1,0 +1,27 @@
+name: Hyunyang AWS OIDC (kimsw94/kr-phone-verification)
+on:
+  push:
+    branches: ["main"]
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  aws:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::070108438322:role/hyunyang/github/hyunyang-kr-phone-verification-main
+          aws-region: ap-northeast-2
+
+      - name: Verify AWS identity
+        run: aws sts get-caller-identity
+
+      # Add deploy steps here (ECR push, Lambda update, ECS deploy, etc.)
