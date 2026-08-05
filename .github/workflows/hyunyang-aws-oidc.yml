@@ -18,7 +18,7 @@ jobs:
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: arn:aws:iam::070108438322:role/hyunyang/github/hyunyang-kr-phone-verification-main
+          role-to-assume: arn:aws:iam::070108438322:role/hyunyang/github/hyunyang-kimsw94-kr-phone-verification-main
           aws-region: ap-northeast-2
 
       - name: Verify AWS identity
