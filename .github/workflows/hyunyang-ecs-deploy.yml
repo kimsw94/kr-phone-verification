@@ -1,0 +1,111 @@
+name: Hyunyang ECS Deploy (kimsw94/kr-phone-verification)
+on:
+  push:
+    branches: ["main"]
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: hyunyang-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: .
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: arn:aws:iam::070108438322:role/hyunyang/github/kimsw94-ecs-kr-phone-verification-main
+          aws-region: ap-northeast-2
+
+      - name: Login to Amazon ECR
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push image
+        id: image
+        env:
+          IMAGE_URI: 070108438322.dkr.ecr.ap-northeast-2.amazonaws.com/kimsw94-kr-phone-verification
+          IMAGE_TAG: ${{ github.sha }}
+          ECR_REPOSITORY: kimsw94-kr-phone-verification
+        run: |
+          docker build -f Dockerfile -t "$IMAGE_URI:$IMAGE_TAG" .
+          docker push "$IMAGE_URI:$IMAGE_TAG"
+          IMAGE_DIGEST=$(aws ecr describe-images --repository-name "$ECR_REPOSITORY" --image-ids imageTag="$IMAGE_TAG" --query 'imageDetails[0].imageDigest' --output text)
+          test -n "$IMAGE_DIGEST" && test "$IMAGE_DIGEST" != "None"
+          echo "digest=$IMAGE_DIGEST" >> "$GITHUB_OUTPUT"
+          echo "image=$IMAGE_URI@$IMAGE_DIGEST" >> "$GITHUB_OUTPUT"
+          echo "source_sha=$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Render immutable ECS task definition
+        env:
+          ECS_CLUSTER: kimsw94-kr-phone-verification
+          ECS_SERVICE: kimsw94-kr-phone-verification
+          CONTAINER_NAME: kimsw94-kr-phone-verification
+          IMAGE_URI: 070108438322.dkr.ecr.ap-northeast-2.amazonaws.com/kimsw94-kr-phone-verification
+          IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
+        run: |
+          TASK_DEFINITION_ARN=$(aws ecs describe-services --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE" --query 'services[0].taskDefinition' --output text)
+          aws ecs describe-task-definition --task-definition "$TASK_DEFINITION_ARN" --query taskDefinition > task-definition.json
+          python3 - <<'PY'
+          import json, os
+          path = 'task-definition.json'
+          with open(path, encoding='utf-8') as f:
+              task = json.load(f)
+          for key in ('taskDefinitionArn', 'revision', 'status', 'requiresAttributes', 'compatibilities', 'registeredAt', 'registeredBy', 'deregisteredAt'):
+              task.pop(key, None)
+          containers = task.get('containerDefinitions', [])
+          target = os.environ['CONTAINER_NAME']
+          matches = [container for container in containers if container.get('name') == target]
+          if len(matches) != 1:
+              raise SystemExit(f'expected one container named {target!r}, found {len(matches)}')
+          matches[0]['image'] = f"{os.environ['IMAGE_URI']}@{os.environ['IMAGE_DIGEST']}"
+          with open(path, 'w', encoding='utf-8') as f:
+              json.dump(task, f)
+          PY
+
+      - name: Register task definition and update ECS service
+        id: ecs_deploy
+        env:
+          ECS_CLUSTER: kimsw94-kr-phone-verification
+          ECS_SERVICE: kimsw94-kr-phone-verification
+        run: |
+          TASK_DEFINITION_ARN=$(aws ecs register-task-definition --cli-input-json file://task-definition.json --query 'taskDefinition.taskDefinitionArn' --output text)
+          aws ecs update-service --cluster "$ECS_CLUSTER" --service "$ECS_SERVICE" --task-definition "$TASK_DEFINITION_ARN"
+          aws ecs wait services-stable --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE"
+          echo "task_definition_arn=$TASK_DEFINITION_ARN" >> "$GITHUB_OUTPUT"
+
+      - name: Write structured deployment result
+        if: always()
+        env:
+          DEPLOYMENT_ID: 7c53434f-d1f4-4f2c-bb7b-592ef22dc5fa
+          DEPLOYMENT_STATUS: ${{ job.status }}
+          IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
+          TASK_DEFINITION_ARN: ${{ steps.ecs_deploy.outputs.task_definition_arn }}
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/.hyunyang"
+          jq -cn \
+            --arg deployment_id "$DEPLOYMENT_ID" --arg orchestration "direct_actions" \
+            --arg status "$DEPLOYMENT_STATUS" --arg source_sha "$GITHUB_SHA" \
+            --arg image_digest "$IMAGE_DIGEST" --arg task_definition_arn "$TASK_DEFINITION_ARN" \
+            '{deployment_id:$deployment_id,orchestration:$orchestration,status:$status,source_sha:$source_sha,image_digest:$image_digest,task_definition_arn:$task_definition_arn}' \
+            > "$GITHUB_WORKSPACE/.hyunyang/deployment-result.json"
+
+      - name: Publish structured deployment result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hyunyang-deployment-result
+          path: .hyunyang/deployment-result.json
+          if-no-files-found: error
+          retention-days: 7
