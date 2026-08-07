@@ -1,0 +1,49 @@
+name: Hyunyang ECR Push (kimsw94/kr-phone-verification)
+on:
+  push:
+    branches: ["main"]
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: hyunyang-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  push:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: .
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: arn:aws:iam::070108438322:role/hyunyang/github/kimsw94-ecr-kr-phone-verification-main
+          aws-region: ap-northeast-2
+
+      - name: Login to Amazon ECR
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push image
+        id: image
+        env:
+          IMAGE_URI: 070108438322.dkr.ecr.ap-northeast-2.amazonaws.com/kimsw94-kr-phone-verification
+          IMAGE_TAG: ${{ github.sha }}
+          ECR_REPOSITORY: kimsw94-kr-phone-verification
+        run: |
+          docker build -f Dockerfile -t "$IMAGE_URI:$IMAGE_TAG" .
+          docker push "$IMAGE_URI:$IMAGE_TAG"
+          IMAGE_DIGEST=$(aws ecr describe-images --repository-name "$ECR_REPOSITORY" --image-ids imageTag="$IMAGE_TAG" --query 'imageDetails[0].imageDigest' --output text)
+          test -n "$IMAGE_DIGEST" && test "$IMAGE_DIGEST" != "None"
+          echo "digest=$IMAGE_DIGEST" >> "$GITHUB_OUTPUT"
+          echo "image=$IMAGE_URI@$IMAGE_DIGEST" >> "$GITHUB_OUTPUT"
+          echo "source_sha=$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+
